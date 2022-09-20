@@ -17,7 +17,8 @@ export default defineConfig({
         modifyVars: {
           'primary-color': '#9FA3EF',
           'error-color': '#FF3C38',
-          'btn-primary-color': '#090A17'
+          'btn-primary-color': '#090A17',
+          '@border-radius-base': '8px'
         },
         javascriptEnabled: true,
       },
