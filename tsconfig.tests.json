@@ -1,0 +1,13 @@
+{
+  "extends": "@vue/tsconfig/tsconfig.web.json",
+  "include": ["env.d.ts", "tests/**/*", "src/**/*", "src/**/*.vue" ],
+  "exclude": [ ],
+  "compilerOptions": {
+    "composite": true,
+    "baseUrl": ".",
+    "types": [ "mocha" ],
+    "paths": {
+      "@/*": ["./src/*"]
+    },
+  }
+}

@@ -1,0 +1,9 @@
+{
+    "testnetMnemonic": "fold boring spy rabbit verb ability manage melody point harsh section key grab castle water clarify share crime treat area vendor pumpkin ridge sort",
+    "cosmosAccountAddress": "imv15wpt8nxay9drzhvlgxrw6p38jrx8jgthxhqz2y",
+    "ethAccountAddress": "0xa382b3ccdd215a315d9f4186ed062790cc792177",
+    "testnetAddress" : "https://tx-endpoint-test.imversed.com:443",
+    "testnetQueryAddress": "https://query-endpoint-test.imversed.com:443",
+    "testnetEthAddress": "https://jsonrpc-endpoint-test.imversed.com:443",
+    "testnetEthTransactionExplorer": "https://txe-test.imversed.com"
+}

@@ -1,0 +1,649 @@
+import Web3 from "web3"
+import {loadWallet, tx, bank, pools} from "@imversed/js-client"
+import {StargateClient, SigningStargateClient} from "@imversed/stargate"
+import  {encodeSecp256k1Pubkey} from "@imversed/amino"
+import {MsgSend} from "@imversed/js-client/lib/bank/types/cosmos/bank/v1beta1/tx"
+import  { encodePubkey} from "@imversed/proto-signing"
+import {makeAuthInfoBytes, makeSignBytes, makeSignDoc, Registry} from "@cosmjs/proto-signing"
+import {
+    setupAuthExtension,
+    setupBankExtension,
+    setupStakingExtension,
+    setupTxExtension,
+    authzTypes,
+    bankTypes,
+    distributionTypes,
+    feegrantTypes,
+    govTypes,
+    stakingTypes,
+    ibcTypes
+} from "@imversed/stargate/build/modules"
+
+import { ethers } from "ethers"
+
+import { accountFromAny } from "@imversed/stargate/build/accounts";
+
+import {Coin} from "cosmjs-types/cosmos/base/v1beta1/coin"
+import type {GeneratedType} from "@cosmjs/proto-signing/build/registry"
+import {Int53} from "@imversed/math"
+import {QueryClient} from "@imversed/stargate/build/queryclient"
+import {Tendermint34Client} from "@imversed/tendermint-rpc"
+import {hdkey} from "ethereumjs-wallet"
+const bip39 = require("bip39")
+
+const defaultRegistryTypes = [
+    ["/cosmos.base.v1beta1.Coin", Coin], ...authzTypes, ...bankTypes, ...distributionTypes, ...feegrantTypes, ...govTypes, ...stakingTypes, ...ibcTypes
+] as Iterable<[string, GeneratedType]>
+
+const testData = require("../TestData.json")
+
+describe("Signature unit tests", () => {
+    it("Signed data should match for cosmos and eth3", async () => {
+        const privateKey = "0x4c4f78dc51d286b16554b663d7868f7442464b9f3b268e7a799d9952cde3f66e"
+        const w3 = new Web3()
+
+        console.log(testData.testnetMnemonic)
+
+        // w3.eth.accounts.sign("", privateKey)
+
+    }, 500000)
+
+    it("Signed data should match for cosmos and eth2", async () => {
+        const wallet = await loadWallet(testData.testnetMnemonic)
+        const [account] = await wallet.getAccounts()
+
+        const encodedMessageObject = {
+            typeUrl: "/cosmos.bank.v1beta1.MsgSend",
+            value: MsgSend.fromPartial({
+                fromAddress: account.address,
+                toAddress: "imv1nsqgqgvytfr5pnle78r9mpar4q2acv8x226elf",
+                amount: [{denom: "aimv", amount: "100050000600"}]
+            })
+        }
+
+        const registry = new Registry(defaultRegistryTypes)
+
+        const fees = {
+            amount: [{
+                amount: "2000000000000",
+                denom: "aimv"
+            }],
+            gas: "200000"
+        }
+
+        const txBody = {
+            typeUrl: "/cosmos.tx.v1beta1.TxBody",
+            value: {
+                messages: [encodedMessageObject],
+                memo: ""
+            }
+        }
+
+        const txBodyBytes = registry.encode(txBody)
+
+        let pubkey = encodePubkey(encodeSecp256k1Pubkey(account.pubkey, "/ethermint.crypto.v1.ethsecp256k1.PubKey"))
+
+        const gasLimit = Int53.fromString(fees.gas).toNumber()
+
+        const tendermintClient = await Tendermint34Client.connect("https://tx-endpoint-test.imversed.com:443")
+        const queryClient = QueryClient.withExtensions(tendermintClient, setupAuthExtension, setupBankExtension, setupStakingExtension, setupTxExtension)
+
+        const [accountBytes, tmStatus] = await Promise.all([
+            queryClient.auth.account(account.address),
+            tendermintClient.status()
+        ])
+
+        // @ts-ignore
+        const networkConnectedAccount = accountFromAny(accountBytes)
+
+        const chainId = tmStatus.nodeInfo.network
+        const { sequence, accountNumber }  = networkConnectedAccount
+
+        const authInfoBytes = makeAuthInfoBytes([ { pubkey, sequence } ], fees.amount, gasLimit)
+
+        const signDoc = makeSignDoc(txBodyBytes, authInfoBytes, chainId, accountNumber)
+
+        const { signature, signed } = await wallet.signDirect(account.address, signDoc, pubkey.typeUrl)
+
+        const signDocBytes = makeSignBytes(signDoc)
+
+        const provider = new ethers.providers.JsonRpcProvider("https://tx-endpoint-test.imversed.com:443")
+
+        //address: 0xa382b3CcdD215a315d9F4186Ed062790Cc792177
+        const walletEth = ethers.Wallet.fromMnemonic(testData.testnetMnemonic)
+        walletEth.connect(provider)
+
+        const res = await walletEth.signMessage(signDocBytes)
+
+        // 5e250ad05e51669a06be6339335fe6a5ea3032c3b477f4aa935a16973e5ca844037e3b4bb4cae551394b6c3f3e55dcf5b9c56e9f6ea5e5a4c0afd1362e019ae5
+        // Q9kZQvEtysQNe0UfRVPhLJzkmwbp8GGVH+4TFWilA90oqlH/fL2uhDnmH8K2yznf2TxTZTfpH23ZxDaaN3feZhs=
+        console.log("res: " + res)
+
+        // const hex = Array.from(signDocBytes, function(byte) {
+        //     return ('0' + (byte & 0xFF).toString(16)).slice(-2);
+        // }).join('')
+        //
+        // console.log(hex)
+
+        // const hashedMessage = new Keccak256(signDocBytes).digest()
+        // const signature = await crypto_1.Secp256k1.createSignature(hashedMessage, account.);
+        // const signatureBytes = new Uint8Array([...signature.r(32), ...signature.s(32)]);
+        // const stdSignature = (0, amino_1.encodeSecp256k1Signature)(pubkey, signatureBytes, "/ethermint.crypto.v1.ethsecp256k1.PubKey");
+        // return {
+        //     signed: signDoc,
+        //     signature: stdSignature
+        // };
+
+        // XiUK0F5RZpoGvmM5M1/mpeowMsO0d/Sqk1oWlz5cqEQDfjtLtMrlUTlLbD8+Vdz1ucVun26l5aTAr9E2LgGa5Q==
+
+        // console.log(signature.signature)
+
+        // const rawTran = TxRaw.fromPartial({
+        //     bodyBytes: signed.bodyBytes,
+        //     authInfoBytes: signed.authInfoBytes,
+        //     signatures: encoding_1.fromBase64(signature.signature)
+        // })
+    }, 500000)
+
+    it("Try ether", async () => {
+        const provider = new ethers.providers.JsonRpcProvider("https://tx-endpoint-test.imversed.com:443")
+
+        //address: 0xa382b3CcdD215a315d9F4186Ed062790Cc792177
+        const wallet = ethers.Wallet.fromMnemonic(testData.testnetMnemonic)
+        wallet.connect(provider)
+
+        // wallet.signMessage()
+        // console.log(wallet)
+        // provider.getSigner()
+    }, 50000)
+
+    it("Signed data should match for cosmos and eth", async () => {
+        const privateKey = "0x4c4f78dc51d286b16554b663d7868f7442464b9f3b268e7a799d9952cde3f66e"
+        const w3 = new Web3()
+
+
+        const seed = await bip39.mnemonicToSeed(testData.testnetMnemonic)
+        console.log(seed)
+
+        const hdWallet = hdkey.fromMasterSeed(seed);
+
+        const web3wallet = hdWallet.derivePath("m/44'/60'/0'/0/0").getWallet();
+        const web3address = '0x' + web3wallet.getAddress().toString("hex");
+        const web3privateKey = web3wallet.getPrivateKey().toString("hex");
+        const web3account =  {address: web3address, privateKey: web3privateKey}
+
+        const messageBytesHex = "0a91010a8e010a1c2f636f736d6f732e62616e6b2e763162657461312e4d736753656e64126e0a2a696d763135777074386e7861793964727a68766c67787277367033386a7278386a6774687868717a3279122a696d76316e7371677167767974667235706e6c65373872396d7061723471326163763878323236656c661a140a0461696d76120c31303030353030303036303012780a590a4f0a282f65746865726d696e742e63727970746f2e76312e657468736563703235366b312e5075624b657912230a21033b26afb779374a7f798df5553cec6031a204371db6544bc9d3695608ea589bd412040a0208011803121b0a150a0461696d76120d3230303030303030303030303010c09a0c1a12696d7665727365645f353535353535382d3120db01"
+
+        const account = w3.eth.accounts.privateKeyToAccount(web3privateKey)
+
+        // @ts-ignore
+        const res = w3.eth.accounts.sign(messageBytesHex, web3privateKey)
+        console.log(res)
+
+
+        // hm:ed7dbe3745a8a27141c093b12d914d859c46c5d68fe18b9d4212a4a4c0e1cbbe
+        // r:5e250ad05e51669a06be6339335fe6a5ea3032c3b477f4aa935a16973e5ca844
+        // s:037e3b4bb4cae551394b6c3f3e55dcf5b9c56e9f6ea5e5a4c0afd1362e019ae5
+
+        // // w3.utils.utf8ToHex("Hello world")
+        //
+        // const messageBytes = [10,
+        //     145,
+        //     1,
+        //     10,
+        //     142,
+        //     1,
+        //     10,
+        //     28,
+        //     47,
+        //     99,
+        //     111,
+        //     115,
+        //     109,
+        //     111,
+        //     115,
+        //     46,
+        //     98,
+        //     97,
+        //     110,
+        //     107,
+        //     46,
+        //     118,
+        //     49,
+        //     98,
+        //     101,
+        //     116,
+        //     97,
+        //     49,
+        //     46,
+        //     77,
+        //     115,
+        //     103,
+        //     83,
+        //     101,
+        //     110,
+        //     100,
+        //     18,
+        //     110,
+        //     10,
+        //     42,
+        //     105,
+        //     109,
+        //     118,
+        //     49,
+        //     53,
+        //     119,
+        //     112,
+        //     116,
+        //     56,
+        //     110,
+        //     120,
+        //     97,
+        //     121,
+        //     57,
+        //     100,
+        //     114,
+        //     122,
+        //     104,
+        //     118,
+        //     108,
+        //     103,
+        //     120,
+        //     114,
+        //     119,
+        //     54,
+        //     112,
+        //     51,
+        //     56,
+        //     106,
+        //     114,
+        //     120,
+        //     56,
+        //     106,
+        //     103,
+        //     116,
+        //     104,
+        //     120,
+        //     104,
+        //     113,
+        //     122,
+        //     50,
+        //     121,
+        //     18,
+        //     42,
+        //     105,
+        //     109,
+        //     118,
+        //     49,
+        //     110,
+        //     115,
+        //     113,
+        //     103,
+        //     113,
+        //     103,
+        //     118,
+        //     121,
+        //     116,
+        //     102,
+        //     114,
+        //     53,
+        //     112,
+        //     110,
+        //     108,
+        //     101,
+        //     55,
+        //     56,
+        //     114,
+        //     57,
+        //     109,
+        //     112,
+        //     97,
+        //     114,
+        //     52,
+        //     113,
+        //     50,
+        //     97,
+        //     99,
+        //     118,
+        //     56,
+        //     120,
+        //     50,
+        //     50,
+        //     54,
+        //     101,
+        //     108,
+        //     102,
+        //     26,
+        //     20,
+        //     10,
+        //     4,
+        //     97,
+        //     105,
+        //     109,
+        //     118,
+        //     18,
+        //     12,
+        //     49,
+        //     48,
+        //     48,
+        //     48,
+        //     53,
+        //     48,
+        //     48,
+        //     48,
+        //     48,
+        //     54,
+        //     48,
+        //     48,
+        //     18,
+        //     120,
+        //     10,
+        //     89,
+        //     10,
+        //     79,
+        //     10,
+        //     40,
+        //     47,
+        //     101,
+        //     116,
+        //     104,
+        //     101,
+        //     114,
+        //     109,
+        //     105,
+        //     110,
+        //     116,
+        //     46,
+        //     99,
+        //     114,
+        //     121,
+        //     112,
+        //     116,
+        //     111,
+        //     46,
+        //     118,
+        //     49,
+        //     46,
+        //     101,
+        //     116,
+        //     104,
+        //     115,
+        //     101,
+        //     99,
+        //     112,
+        //     50,
+        //     53,
+        //     54,
+        //     107,
+        //     49,
+        //     46,
+        //     80,
+        //     117,
+        //     98,
+        //     75,
+        //     101,
+        //     121,
+        //     18,
+        //     35,
+        //     10,
+        //     33,
+        //     3,
+        //     59,
+        //     38,
+        //     175,
+        //     183,
+        //     121,
+        //     55,
+        //     74,
+        //     127,
+        //     121,
+        //     141,
+        //     245,
+        //     85,
+        //     60,
+        //     236,
+        //     96,
+        //     49,
+        //     162,
+        //     4,
+        //     55,
+        //     29,
+        //     182,
+        //     84,
+        //     75,
+        //     201,
+        //     211,
+        //     105,
+        //     86,
+        //     8,
+        //     234,
+        //     88,
+        //     155,
+        //     212,
+        //     18,
+        //     4,
+        //     10,
+        //     2,
+        //     8,
+        //     1,
+        //     24,
+        //     1,
+        //     18,
+        //     27,
+        //     10,
+        //     21,
+        //     10,
+        //     4,
+        //     97,
+        //     105,
+        //     109,
+        //     118,
+        //     18,
+        //     13,
+        //     50,
+        //     48,
+        //     48,
+        //     48,
+        //     48,
+        //     48,
+        //     48,
+        //     48,
+        //     48,
+        //     48,
+        //     48,
+        //     48,
+        //     48,
+        //     16,
+        //     192,
+        //     154,
+        //     12,
+        //     26,
+        //     18,
+        //     105,
+        //     109,
+        //     118,
+        //     101,
+        //     114,
+        //     115,
+        //     101,
+        //     100,
+        //     95,
+        //     53,
+        //     53,
+        //     53,
+        //     53,
+        //     53,
+        //     53,
+        //     56,
+        //     45,
+        //     49,
+        //     32,
+        //     219,
+        //     1]
+        //
+        // const hex = Array.from(messageBytes, function(byte) {
+        //   return ('0' + (byte & 0xFF).toString(16)).slice(-2);
+        // }).join('')
+        //
+        // // const signedEth = w3.eth.accounts.sign(hex, privateKey)
+        //
+        // // const cosmosSgnBytes = new Uint8Array([
+        // //     241, 68, 86, 1, 24, 248, 136, 94, 62, 99, 192,
+        // //     166, 12, 228, 21, 66, 129, 5, 223, 57, 88, 32,
+        // //     201, 181, 92, 36, 12, 224, 68, 96, 208, 214, 99,
+        // //     166, 153, 17, 39, 27, 113, 175, 150, 80, 162, 247,
+        // //     151, 250, 183, 72, 24, 192, 28, 134, 11, 175, 202,
+        // //     131, 229, 52, 140, 237, 52, 84, 212, 204
+        // // ])
+        //
+        // // const signatureHex = Array.from(cosmosSgnBytes, function(byte) {
+        // //   return ('0' + (byte & 0xFF).toString(16)).slice(-2);
+        // // }).join('')
+        //
+        // // 0x2c8a3f61f983e3f7144c5653acb33d32a06aecc948c558594d1574eb820f332b4a9032150d514f7f21dcfe174d5e607e69b01df474a7e4e82911528123eb0cec1c
+        //
+        // // console.log(hex)
+        // // console.log(signedEth)
+        // // console.log(signatureHex)
+        //
+        // // Credentials credentials = Credentials.create(privateAccountKey);
+        // //
+        // // console.log(signedEth)
+        // //
+        // const wallet = await loadWallet(mnemonic)
+        //
+        // const [account] = await wallet.getAccounts()
+        //
+        // // wallet.signDirect(account.address, )
+        //
+        // //
+        // const bankClient = await bank.txClient(wallet, {addr: "https://tx-endpoint-test.imversed.com:443"})
+        // //
+        //
+        //
+        // const encodeObject = bankClient.msgSend({
+        //     fromAddress: account.address,
+        //     toAddress: "imv1nsqgqgvytfr5pnle78r9mpar4q2acv8x226elf",
+        //     amount: [{denom: "aimv", amount: "100050000600"}]
+        // })
+        //
+        // const fees = {
+        //     amount: [{
+        //         amount: "2000000000000",
+        //         denom: "aimv"
+        //     }],
+        //     gas: "200000"
+        // }
+        //
+        // //
+        // const signer = await SigningStargateClient.connectWithSigner("https://tx-endpoint-test.imversed.com:443", wallet)
+        // //
+        // // const [{ accountNumber, sequence }, chainId ] = await Promise.all([
+        // //     signer.getSequence(account.address),
+        // //     signer.getChainId()
+        // // ])
+        // //
+        // // // @ts-ignore
+        // // const signedByWallet = await wallet.signDirect(account.address, {
+        // //   bodyBytes: signedCosmosTransaction.bodyBytes.data,
+        // //   authInfoBytes: signedCosmosTransaction.authInfoBytes.data,
+        // //   accountNumber: Long.fromNumber(accountNumber),
+        // //   chainId: chainId
+        // // }, "/ethermint.crypto.v1.ethsecp256k1.PubKey")
+        // //
+        // // // transaction encoded and can be sent
+        // const cosmosSigned = await signer.sign(account.address, [encodeObject], fees, "")
+        //
+        // console.log(cosmosSigned)
+        // // const signatureBytes = fromBase64(signedByWallet.signature.signature)
+        //
+        // // const hashedMessage = new crypto_1.Keccak256(signBytes).digest();
+        // // const signature = await crypto_1.Secp256k1.createSignature(hashedMessage, privkey);
+        // // const signatureBytes = new Uint8Array([...signature.r(32), ...signature.s(32)]);
+        // // const stdSignature = (0, amino_1.encodeSecp256k1Signature)(pubkey, signatureBytes, "/ethermint.crypto.v1.ethsecp256k1.PubKey");
+        // // return {
+        // //   signed: signDoc,
+        // //   signature: stdSignature
+        // // };
+        //
+        // // const [{ accountNumber, sequence }, chainId ] = await Promise.all([
+        // //     signer.getSequence(account.address),
+        // //     signer.getChainId()
+        // // ])
+        //
+        //
+        // // {
+        // //   address: 'imv15wpt8nxay9drzhvlgxrw6p38jrx8jgthxhqz2y',
+        // //       pubkey: {
+        // //   type: '/ethermint.crypto.v1.ethsecp256k1.PubKey',
+        // //       value: 'Azsmr7d5N0p/eY31VTzsYDGiBDcdtlRLydNpVgjqWJvU'
+        // // },
+        // //   accountNumber: 219,
+        // //       sequence: 3
+        // // }
+        //
+        // // (0, utils_1.assert)((0, proto_signing_1.isOfflineDirectSigner)(this.signer));
+        // // const accountFromSigner = (await this.signer.getAccounts()).find((account) => account.address === signerAddress);
+        //
+        // // let pubkey = (0, proto_signing_1.encodePubkey)((0, amino_1.encodeSecp256k1Pubkey)(accountFromSigner.pubkey, "/ethermint.crypto.v1.ethsecp256k1.PubKey"));
+        //
+        // // const txBodyEncodeObject = {
+        // //   typeUrl: "/cosmos.tx.v1beta1.TxBody",
+        // //   value: {
+        // //     messages: messages,
+        // //     memo: memo,
+        // //   },
+        // // };
+        //
+        // // const txBodyBytes = this.registry.encode(txBodyEncodeObject);
+        // // const gasLimit = math_1.Int53.fromString(fee.gas).toNumber();
+        //
+        // // const authInfoBytes = (0, proto_signing_1.makeAuthInfoBytes)([{ pubkey, sequence }], fee.amount, gasLimit);
+        //
+        // // const signDoc = (0, proto_signing_1.makeSignDoc)(txBodyBytes, authInfoBytes, chainId, accountNumber);
+        //
+        // // const { signature, signed } = await this.signer.signDirect(signerAddress, signDoc, pubkey.typeUrl);
+        //
+        // // return tx_3.TxRaw.fromPartial({
+        // //   bodyBytes: signed.bodyBytes,
+        // //   authInfoBytes: signed.authInfoBytes,
+        // //   signatures: [(0, encoding_1.fromBase64)(signature.signature)],
+        // // });
+        //
+        // // const { accountNumber, sequence } = await signer.getSequence(account.address);
+        // // const chainId = await this.getChainId()
+        //
+        // // const txBytes = TxRaw.encode(res).finish();
+        // // const broadcasted = await signer.broadcastTx(txBytes);
+        // // console.log(broadcasted)
+        //
+        //
+        // // const connectedClient = await StargateClient.connect("https://tx-endpoint-test.imversed.com:443")
+        // // const res = await connectedClient.getChainId() // .sign(encodeObject)
+        // // console.log(res)
+        // //
+        //
+        // // expect(res.signatures[0]).toStrictEqual(new Uint8Array([
+        // //   241, 68, 86, 1, 24, 248, 136, 94, 62, 99, 192,
+        // //   166, 12, 228, 21, 66, 129, 5, 223, 57, 88, 32,
+        // //   201, 181, 92, 36, 12, 224, 68, 96, 208, 214, 99,
+        // //   166, 153, 17, 39, 27, 113, 175, 150, 80, 162, 247,
+        // //   151, 250, 183, 72, 24, 192, 28, 134, 11, 175, 202,
+        // //   131, 229, 52, 140, 237, 52, 84, 212, 204
+        // // ]))
+        //
+        // // else {
+        // //     const { accountNumber, sequence } = await this.getSequence(signerAddress);
+        // //     const chainId = await this.getChainId();
+        // //     signerData = {
+        // //       accountNumber: accountNumber,
+        // //       sequence: sequence,
+        // //       chainId: chainId,
+        // //     };
+        // //   }
+        // //   return (0, proto_signing_1.isOfflineDirectSigner)(this.signer)
+        // //       ? this.signDirect(signerAddress, messages, fee, memo, signerData)
+
+
+    }, 500000000)
+})
